@@ -1,28 +1,43 @@
-- name: Ensure HarmonyLib.dll (skip if committed, else download)
-  shell: powershell
-  run: |
-    if (Test-Path lib\HarmonyLib.dll) {
-      Write-Host "lib\\HarmonyLib.dll already exists, skipping download."
-      exit 0
-    }
-    $version = "2.2.2"
-    $pkg = "HarmonyLib"
-    $nupkg = "$pkg.$version.nupkg"
-    $v3 = "https://api.nuget.org/v3-flatcontainer/$pkg/$version/$nupkg"
-    Write-Host "Trying v3 flat container: $v3"
-    try {
-      Invoke-WebRequest -Uri $v3 -OutFile harmony.nupkg -UseBasicParsing -ErrorAction Stop
-    } catch {
-      Write-Host "v3 failed, trying v2..."
-      try {
-        Invoke-WebRequest -Uri "https://www.nuget.org/api/v2/package/HarmonyLib/$version" -OutFile harmony.nupkg -UseBasicParsing -ErrorAction Stop
-      } catch {
-        Write-Error "Both v3 and v2 endpoints failed. Please commit lib\\HarmonyLib.dll to repo or try different version."
-        exit 1
-      }
-    }
-    Expand-Archive -LiteralPath harmony.nupkg -DestinationPath "harmony_pkg" -Force
-    $candidates = @("harmony_pkg/lib/net472/HarmonyLib.dll","harmony_pkg/lib/netstandard2.0/HarmonyLib.dll","harmony_pkg/lib/net45/HarmonyLib.dll")
-    foreach ($p in $candidates) { if (Test-Path $p) { Copy-Item -Path $p -Destination "lib/HarmonyLib.dll" -Force; Write-Host "Copied $p -> lib\\HarmonyLib.dll"; break } }
-    if (-not (Test-Path lib\HarmonyLib.dll)) { Write-Error "Could not find HarmonyLib.dll in package"; exit 1 }
-    Write-Host "lib contents:"; Get-ChildItem lib
+name: Build WinlatorXRBridge
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+
+jobs:
+  build:
+    runs-on: windows-latest
+
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v3
+
+    - name: Setup .NET
+      uses: actions/setup-dotnet@v3
+      with:
+        dotnet-version: '7.0.x'
+
+    - name: Ensure lib folder exists
+      run: |
+        if (-Not (Test-Path lib)) {
+          Write-Host "lib folder missing, creating..."
+          New-Item -ItemType Directory -Path lib
+        } else {
+          Write-Host "lib folder exists, skipping creation"
+        }
+
+    # Skip HarmonyLib download: we already have it in lib/
+    - name: Verify HarmonyLib.dll
+      run: |
+        if (-Not (Test-Path lib\HarmonyLib.dll)) {
+          Write-Error "HarmonyLib.dll is missing in lib/. Please add it to the repo."
+        } else {
+          Write-Host "HarmonyLib.dll found, using committed DLL"
+        }
+
+    - name: Build WinlatorXRBridge DLL
+      run: |
+        dotnet build src/WinlatorXRBridge.csproj -c Release
+      shell: powershell
