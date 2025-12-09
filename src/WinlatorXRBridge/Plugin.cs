@@ -1,97 +1,100 @@
-using BepInEx;
-using UnityEngine;
 using System;
-using Quaternion = UnityEngine.Quaternion;
-using Vector3u = UnityEngine.Vector3;
+using System.IO;
+using BepInEx;
+using BepInEx.Logging;
+using UnityEngine;
 
 namespace WinlatorXRBridge
 {
-    [BepInPlugin("com.yourname.winlatorxrbridge", "WinlatorXR Bridge", "1.0.0")]
+    [BepInPlugin("com.yourname.winlatorxrbridge", "WinlatorXR Bridge", "0.1.0")]
     public class Plugin : BaseUnityPlugin
     {
+        internal static ManualLogSource Log;
         private WinlatorXRListener _listener;
-        private XRFrame _lastFrame;
-        private float _smoothing = 0.9f;
-        private GameObject _leftHandObj;
-        private GameObject _rightHandObj;
+        private string _versionPath = @"Z:\tmp\xr\version";
 
-        void Awake()
+        private void Awake()
         {
-            Logger.LogInfo("WinlatorXR Bridge loading...");
-            _listener = new WinlatorXRListener(7278);
+            Log = Logger;
+            Log.LogInfo("WinlatorXRBridge Awake");
+
+            // read API version (if available)
             try
             {
-                _listener.Start();
-                Logger.LogInfo("Started WinlatorXR UDP listener on port 7278.");
+                if (File.Exists(_versionPath))
+                {
+                    var v = File.ReadAllText(_versionPath).Trim();
+                    Log.LogInfo($"WinlatorXR version file found: '{v}'");
+                }
+                else
+                {
+                    Log.LogWarning($"WinlatorXR version file not found at {_versionPath}. You should create it with content '0.2'.");
+                }
             }
             catch (Exception ex)
             {
-                Logger.LogError($"Failed to start listener: {ex}");
+                Log.LogWarning($"Could not read version file: {ex}");
             }
 
-            _leftHandObj = FindHandObject(false);
-            _rightHandObj = FindHandObject(true);
+            // Create listener and subscribe
+            _listener = new WinlatorXRListener(port: 7278);
+            _listener.OnFrame += OnFrameReceived;
+            _listener.OnLog += s => Log.LogInfo("[Listener] " + s);
+            _listener.OnError += e => Log.LogError("[Listener] " + e);
+
+            // start listener
+            try
+            {
+                _listener.Start();
+                Log.LogInfo("WinlatorXRListener started on 127.0.0.1:7278");
+            }
+            catch (Exception ex)
+            {
+                Log.LogError("Failed to start WinlatorXRListener: " + ex);
+            }
         }
 
-        private GameObject FindHandObject(bool right)
+        private void OnDestroy()
         {
-            string[] namesRight = new[] { "RightHand", "Right Hand", "HandRight", "Hand_R", "controller_right" };
-            string[] namesLeft  = new[] { "LeftHand", "Left Hand", "HandLeft", "Hand_L", "controller_left" };
-
-            var arr = right ? namesRight : namesLeft;
-            foreach (var n in arr)
+            Log.LogInfo("WinlatorXRBridge OnDestroy - stopping listener");
+            try
             {
-                var go = GameObject.Find(n);
-                if (go != null) return go;
+                if (_listener != null)
+                {
+                    _listener.OnFrame -= OnFrameReceived;
+                    _listener.Stop();
+                    _listener.Dispose();
+                    _listener = null;
+                }
             }
-
-            var all = UnityEngine.Object.FindObjectsOfType<GameObject>();
-            foreach (var go in all)
+            catch (Exception ex)
             {
-                if (go.name.IndexOf("hand", StringComparison.OrdinalIgnoreCase) >= 0 &&
-                    ((right && go.name.IndexOf("right", StringComparison.OrdinalIgnoreCase) >= 0) ||
-                     (!right && go.name.IndexOf("left", StringComparison.OrdinalIgnoreCase) >= 0)))
-                    return go;
+                Log.LogError("Error disposing listener: " + ex);
             }
-            return null;
         }
 
-        void OnDestroy()
+        // Called on Unity main thread when a frame arrives (we schedule actual Unity changes here)
+        private void OnFrameReceived(XRFrame frame)
         {
-            _listener?.Stop();
-            _listener = null;
+            // Only log a short summary to avoid spamming the logfile
+            Log.LogInfo($"Frame received: LPos={frame.LPos.X:F2},{frame.LPos.Y:F2},{frame.LPos.Z:F2} " +
+                        $"RPos={frame.RPos.X:F2},{frame.RPos.Y:F2},{frame.RPos.Z:F2} " +
+                        $"HPos={frame.HPos.X:F2},{frame.HPos.Y:F2},{frame.HPos.Z:F2} Buttons='{frame.ButtonStr}'");
+
+            // TODO: map frame values into Gorilla Tag objects here.
+            // Example: schedule a Unity main-thread action to update transforms:
+            // UnityMainThreadDispatcher.Enqueue(() => ApplyFrameToGameObjects(frame));
+            //
+            // I don't auto-manipulate game state here because Gorilla Tag modding requires
+            // careful hooking and you know the exact places to apply transforms.
         }
 
-        void Update()
+        // Example placeholder (not called by default)
+        private void ApplyFrameToGameObjects(XRFrame frame)
         {
-            if (_listener == null) return;
-            var frame = _listener.LastFrame;
-            if (frame == null) return;
-
-            var headPos = new Vector3u(frame.HPos.X, frame.HPos.Y, frame.HPos.Z);
-            var headRot = new Quaternion((float)frame.HRot.X, (float)frame.HRot.Y, (float)frame.HRot.Z, (float)frame.HRot.W);
-
-            if (Camera.main != null)
-            {
-                Camera.main.transform.position = Vector3u.Lerp(Camera.main.transform.position, headPos, 1f - _smoothing);
-                Camera.main.transform.rotation = Quaternion.Slerp(Camera.main.transform.rotation, headRot, 1f - _smoothing);
-            }
-
-            if (_leftHandObj != null)
-            {
-                var lpos = new Vector3u(frame.LPos.X, frame.LPos.Y, frame.LPos.Z);
-                var lrot = new Quaternion((float)frame.LRot.X, (float)frame.LRot.Y, (float)frame.LRot.Z, (float)frame.LRot.W);
-                _leftHandObj.transform.position = Vector3u.Lerp(_leftHandObj.transform.position, lpos, 1f - _smoothing);
-                _leftHandObj.transform.rotation = Quaternion.Slerp(_leftHandObj.transform.rotation, lrot, 1f - _smoothing);
-            }
-
-            if (_rightHandObj != null)
-            {
-                var rpos = new Vector3u(frame.RPos.X, frame.RPos.Y, frame.RPos.Z);
-                var rrot = new Quaternion((float)frame.RRot.X, (float)frame.RRot.Y, (float)frame.RRot.Z, (float)frame.RRot.W);
-                _rightHandObj.transform.position = Vector3u.Lerp(_rightHandObj.transform.position, rpos, 1f - _smoothing);
-                _rightHandObj.transform.rotation = Quaternion.Slerp(_rightHandObj.transform.rotation, rrot, 1f - _smoothing);
-            }
+            // Example: find a GameObject and set transform (this is for demonstration only)
+            // var go = GameObject.Find("WinlatorHeadProxy");
+            // if (go != null) go.transform.position = new Vector3(frame.HPos.X, frame.HPos.Y, frame.HPos.Z);
         }
     }
 }
