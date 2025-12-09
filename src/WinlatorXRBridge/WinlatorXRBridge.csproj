@@ -1,6 +1,6 @@
 <Project Sdk="Microsoft.NET.Sdk">
   <PropertyGroup>
-    <!-- Target .NET Framework 4.7.2 (Unity / BepInEx use .NET Framework) -->
+    <!-- Target .NET Framework compatible with Unity -->
     <TargetFramework>net472</TargetFramework>
     <OutputType>Library</OutputType>
     <AssemblyName>WinlatorXRBridge</AssemblyName>
@@ -12,6 +12,9 @@
     <!-- keep portable pdbs for better stack traces -->
     <DebugType>portable</DebugType>
     <Deterministic>true</Deterministic>
+
+    <!-- don't try to copy local dependency assemblies from nuget lockfile -->
+    <CopyLocalLockFileAssemblies>false</CopyLocalLockFileAssemblies>
   </PropertyGroup>
 
   <!-- Local (game / BepInEx / Unity) DLL references; make sure these files exist at repo-root/lib/ -->
@@ -34,14 +37,14 @@
     </Reference>
   </ItemGroup>
 
-  <ItemGroup>
-    <Compile Include="Plugin.cs" />
-    <Compile Include="WinlatorXRListener.cs" />
-    <Compile Include="WinlatorXRTypes.cs" />
-  </ItemGroup>
-
-  <!-- Prevent SDK from trying to package references into nuget or copy local -->
-  <PropertyGroup>
-    <CopyLocalLockFileAssemblies>false</CopyLocalLockFileAssemblies>
-  </PropertyGroup>
+  <!-- If you *do* want to explicitly list source files instead of implicit include, set this to false and add Compile items.
+       <PropertyGroup>
+         <EnableDefaultCompileItems>false</EnableDefaultCompileItems>
+       </PropertyGroup>
+       <ItemGroup>
+         <Compile Include="Plugin.cs" />
+         <Compile Include="WinlatorXRListener.cs" />
+         <Compile Include="WinlatorXRTypes.cs" />
+       </ItemGroup>
+  -->
 </Project>
