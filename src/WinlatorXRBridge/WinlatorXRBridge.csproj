@@ -48,4 +48,11 @@
     <Compile Include="WinlatorXRListener.cs" />
     <Compile Include="WinlatorXRTypes.cs" />
   </ItemGroup>
+
+  <!-- Import standard C# targets (multiple fallbacks for different runner setups) -->
+  <Import Project="$(MSBuildToolsPath)\Microsoft.CSharp.targets" Condition="Exists('$(MSBuildToolsPath)\Microsoft.CSharp.targets')" />
+  <Import Project="$(MSBuildBinPath)\Microsoft.CSharp.targets" Condition="Exists('$(MSBuildBinPath)\Microsoft.CSharp.targets')" />
+  <Import Project="C:\Program Files (x86)\MSBuild\Microsoft.CSharp.targets" Condition="Exists('C:\Program Files (x86)\MSBuild\Microsoft.CSharp.targets')" />
+  <Import Project="C:\Program Files (x86)\MSBuild\14.0\Bin\Microsoft.CSharp.targets" Condition="Exists('C:\Program Files (x86)\MSBuild\14.0\Bin\Microsoft.CSharp.targets')" />
+  <Import Project="$(MSBuildToolsPath)\Microsoft.Common.targets" Condition="Exists('$(MSBuildToolsPath)\Microsoft.Common.targets')" />
 </Project>
