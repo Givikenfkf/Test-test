@@ -5,48 +5,126 @@ on:
     branches: [ main ]
   pull_request:
     branches: [ main ]
+  workflow_dispatch:
 
 jobs:
   build:
     runs-on: windows-latest
+    timeout-minutes: 60
 
     steps:
     - name: Checkout repository
       uses: actions/checkout@v3
 
+    - name: Show repo layout (debug)
+      run: |
+        Write-Host "=== Repo root ==="
+        dir -Force
+        Write-Host "=== src tree ==="
+        dir src -Recurse -Force
+      shell: powershell
+
     - name: Ensure lib folder exists
+      shell: powershell
       run: |
         if (-Not (Test-Path lib)) {
           Write-Host "lib folder missing, creating..."
-          New-Item -ItemType Directory -Path lib
+          New-Item -ItemType Directory -Path lib | Out-Null
         } else {
-          Write-Host "lib folder exists, skipping creation"
+          Write-Host "lib folder exists"
         }
-      shell: powershell
+        Write-Host "lib contents:"
+        Get-ChildItem lib -Force | ForEach-Object { Write-Host $_.FullName }
 
-    - name: Verify HarmonyLib.dll
+    - name: Verify required DLLs
+      shell: powershell
       run: |
-        if (-Not (Test-Path lib\HarmonyLib.dll)) {
-          Write-Error "HarmonyLib.dll is missing in lib/. Please add it to the repo."
+        $required = @("HarmonyLib.dll","UnityEngine.dll","Assembly-CSharp.dll","BepInEx.dll")
+        $missing = @()
+        foreach ($r in $required) {
+          if (-Not (Test-Path (Join-Path "lib" $r))) { $missing += $r }
+        }
+        if ($missing.Count -gt 0) {
+          Write-Host "Missing required DLL(s): $($missing -join ', ')"
+          Write-Host "If these are intentional (e.g. you will download them in the workflow), continue; otherwise add them to lib/ in the repo."
         } else {
-          Write-Host "HarmonyLib.dll found, using committed DLL"
+          Write-Host "All required DLLs present in lib/"
         }
-      shell: powershell
 
-    - name: Build WinlatorXRBridge DLL
-      run: |
-        msbuild src/WinlatorXRBridge/WinlatorXRBridge.csproj /p:Configuration=Release
+    - name: Find MSBuild (via vswhere or known paths)
+      id: find-msbuild
       shell: powershell
-
-    - name: Zip artifacts
       run: |
-        $artifactPath = "$PWD\artifacts"
-        if (-Not (Test-Path $artifactPath)) {
-          Write-Error "Build failed or artifacts folder missing."
+        $msbuild = $null
+        $vswhere = "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe"
+        if (Test-Path $vswhere) {
+          Write-Host "vswhere found: $vswhere"
+          try {
+            $instPath = & $vswhere -latest -products * -requires Microsoft.Component.MSBuild -property installationPath 2>$null
+            if ($instPath) {
+              $candidate = Join-Path $instPath "MSBuild\Current\Bin\MSBuild.exe"
+              if (Test-Path $candidate) { $msbuild = $candidate }
+            }
+          } catch { Write-Host "vswhere query failed: $_" }
+        } else {
+          Write-Host "vswhere not found, falling back to common paths"
+        }
+
+        if (-not $msbuild) {
+          $common = @(
+            "${env:ProgramFiles}\Microsoft Visual Studio\2022\Enterprise\MSBuild\Current\Bin\MSBuild.exe",
+            "${env:ProgramFiles}\Microsoft Visual Studio\2022\Professional\MSBuild\Current\Bin\MSBuild.exe",
+            "${env:ProgramFiles}\Microsoft Visual Studio\2022\BuildTools\MSBuild\Current\Bin\MSBuild.exe",
+            "${env:ProgramFiles(x86)}\Microsoft Visual Studio\2022\BuildTools\MSBuild\Current\Bin\MSBuild.exe",
+            "${env:ProgramFiles}\Microsoft Visual Studio\2022\Community\MSBuild\Current\Bin\MSBuild.exe"
+          )
+          foreach ($p in $common) {
+            if (Test-Path $p) { $msbuild = $p; break }
+          }
+        }
+
+        if (-not $msbuild) {
+          Write-Error "MSBuild.exe not found on runner. On windows-latest MSBuild should be present. Aborting."
           exit 1
         }
-        Compress-Archive -Path "$artifactPath\*" -DestinationPath "$PWD\WinlatorXRBridge.zip" -Force
+
+        Write-Host "Using MSBuild: $msbuild"
+        Write-Host "##[set-output name=msbuild_path]$msbuild"
+      env:
+        # keep env blank
+    - name: Build WinlatorXRBridge with MSBuild
       shell: powershell
+      run: |
+        $msbuildPath = "${{ steps.find-msbuild.outputs.msbuild_path }}"
+        if (-not $msbuildPath) {
+          Write-Error "MSBuild path not found in previous step output."
+          exit 1
+        }
+        # ensure artifacts dir exists and is empty
+        $outdir = Join-Path $PWD "artifacts"
+        if (Test-Path $outdir) { Remove-Item $outdir -Recurse -Force -ErrorAction SilentlyContinue }
+        New-Item -ItemType Directory -Path $outdir | Out-Null
+
+        Write-Host "Invoking MSBuild..."
+        & $msbuildPath "src/WinlatorXRBridge/WinlatorXRBridge.csproj" /nologo /verbosity:minimal /p:Configuration=Release /p:OutDir="$outdir\" 
+        $rc = $LASTEXITCODE
+        Write-Host "MSBuild exit code: $rc"
+        if ($rc -ne 0) { Write-Error "MSBuild failed with exit code $rc"; exit $rc }
+
+    - name: List artifacts folder
+      shell: powershell
+      run: |
+        Write-Host "artifacts contents:"
+        Get-ChildItem artifacts -Recurse -Force | ForEach-Object { Write-Host $_.FullName }
+
+    - name: Zip artifacts
+      shell: powershell
+      run: |
+        $zip = "$PWD\WinlatorXRBridge.zip"
+        if (Test-Path $zip) { Remove-Item $zip -Force }
+        if (-Not (Test-Path "$PWD\artifacts")) { Write-Error "No artifacts produced, cannot zip"; exit 1 }
+        Compress-Archive -Path (Join-Path $PWD "artifacts\*") -DestinationPath $zip -Force
+        Write-Host "Created $zip"
 
     - name: Upload DLL zip
       uses: actions/upload-artifact@v4
